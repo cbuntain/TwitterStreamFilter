@@ -1,11 +1,16 @@
 package edu.umd.cs.hcil.twitterstreamfilter;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+// import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.LinkedHashMap;
+
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
@@ -20,25 +25,31 @@ import org.apache.log4j.PatternLayout;
 import org.apache.log4j.varia.LevelRangeFilter;
 import org.apache.log4j.rolling.RollingFileAppender;
 import org.apache.log4j.rolling.TimeBasedRollingPolicy;
-import org.geojson.Feature;
-import org.geojson.FeatureCollection;
-import twitter4j.FilterQuery;
-import twitter4j.RawStreamListener;
-import twitter4j.StallWarning;
-import twitter4j.Status;
-import twitter4j.StatusDeletionNotice;
-import twitter4j.StatusListener;
-import twitter4j.TwitterObjectFactory;
-import twitter4j.TwitterStream;
-import twitter4j.TwitterStreamFactory;
 
-/**
- * Hello world!
- *
- */
+// API v2
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.CookieSpecs;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.net.URISyntaxException;
+
+
 public class StreamFilter 
 {
-    
+
+    public StreamFilter(){
+        super();
+    }
+
     private static int cnt = 0;
 
     @SuppressWarnings("unused")
@@ -51,7 +62,8 @@ public class StreamFilter
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             String line = null;
             
-            while ( (line = br.readLine()) != null ) {
+            while ( (line = br.readLine()) != null ) 
+            {
                 keywords.add(line);
             }
         }
@@ -59,41 +71,7 @@ public class StreamFilter
         return keywords;
     }
     
-    private static List<Double[]> readGeoJson(String file) throws IOException {
-        
-        List<Double[]> bboxes = new ArrayList<>();
-        
-        try (FileReader fr = new FileReader(file)) {
-            FeatureCollection featureCollection = 
-                    new ObjectMapper().readValue(fr, FeatureCollection.class);
-            
-            for ( Feature f : featureCollection.getFeatures() ) {
-                double[] box = f.getBbox();
-                Double[] reboxedBox = new Double[box.length];
-                for ( int i = 0; i<box.length; i++ ) {
-                    reboxedBox[i] = box[i];
-                }
-                bboxes.add(reboxedBox);
-            }
-        }
-        
-        return bboxes;
-    }
-    
-    private static String toLocationsString(final double[][] keywords) {
-        final StringBuilder buf = new StringBuilder(20 * keywords.length * 2);
-        for (double[] keyword : keywords) {
-            if (0 != buf.length()) {
-                buf.append(",");
-            }
-            buf.append(keyword[0]);
-            buf.append(",");
-            buf.append(keyword[1]);
-        }
-        return buf.toString();
-    }
-    
-    public static void main( String[] args )
+    public static void main( String[] args ) throws IOException, URISyntaxException
     {
         // Build the command line options
         Option keywordsOpt = Option.builder("k")
@@ -124,101 +102,6 @@ public class StreamFilter
         options.addOption(boundsOpt);
         options.addOption(usersOpt);
         options.addOption(helpOpt);
-        
-        // Set up the filter query
-        FilterQuery query = null;
-
-        // create the parser
-        CommandLineParser parser = new DefaultParser();
-        try {
-            // parse the command line arguments
-            CommandLine line = parser.parse( options, args );
-            
-            if ( line.hasOption("help") ) {
-                // automatically generate the help statement
-                HelpFormatter formatter = new HelpFormatter();
-                formatter.printHelp( "StreamFilter", options );
-                
-                System.exit(1);
-            }
-            
-            // Check if we have keyword file
-            if ( line.hasOption("keywords") ) {
-                
-                String file = line.getOptionValue("keywords");
-                
-                try {
-                    List<String> keywordList = getKeywords(file);
-                    
-                    if ( query == null ) {
-                        query = new FilterQuery();
-                    }
-                    query.track(keywordList.toArray(new String[0]));
-                    
-                } catch ( IOException ioe ) {
-                    System.err.printf("File [%s] Not Found!", file);
-
-                    System.exit(1);
-                }
-            }
-            
-            // Check if we have a geojson file
-            if ( line.hasOption("bounds") ) {
-                
-                String file = line.getOptionValue("bounds");
-                
-                try {
-                    List<Double[]> locationList = readGeoJson(file);
-                    double[][] locationListDouble = new double[2][2];
-                    
-                    Double[] fullBox = locationList.get(0);
-                    locationListDouble[0] = new double[]{fullBox[0], fullBox[1]};
-                    locationListDouble[1] = new double[]{fullBox[2], fullBox[3]};
-                    
-                    String locStr = toLocationsString(locationListDouble);
-                    System.out.println(locStr);
-                    
-                    if ( query == null ) {
-                        query = new FilterQuery();
-                    }
-                    query.locations(locationListDouble);
-                    
-                } catch ( IOException ioe ) {
-                    System.err.printf("Error reading GeoJSON File: [%s]", file);
-                    ioe.printStackTrace();
-
-                    System.exit(1);
-                }
-            }
-            
-            // Check if we have a user file
-            if ( line.hasOption("users") ) {
-                
-                String file = line.getOptionValue("users");
-                
-                try {
-                    List<String> usersList = getKeywords(file);
-                    long[] usersListLong = new long[usersList.size()];
-                    
-                    for ( int i=0; i<usersList.size(); i++ ) {
-                        usersListLong[i] = Long.parseLong(usersList.get(i));
-                    }
-                    
-                    if ( query == null ) {
-                        query = new FilterQuery();
-                    }
-                    query.follow(usersListLong);
-                } catch ( IOException ioe ) {
-                    System.err.printf("File [%s] Not Found!", file);
-
-                    System.exit(1);
-                }
-            }
-        }
-        catch( ParseException exp ) {
-            // oops, something went wrong
-            System.err.println( "Parsing failed.  Reason: " + exp.getMessage() );
-        }
         
         PatternLayout layoutStandard = new PatternLayout();
         layoutStandard.setConversionPattern("[%p] %d %c %M - %m%n");
@@ -271,76 +154,275 @@ public class StreamFilter
 
         // creates a custom logger and log messages
         final Logger logger = Logger.getLogger(StreamFilter.class);
+        logger.info("Hahha");
+        String keywordString = null;
+        String usersString = null;
 
-        TwitterStream twitterStream = new TwitterStreamFactory().getInstance();
-        
-        // Set the status listener
-        twitterStream.addListener(new StatusListener() {
-
-            @Override
-            public void onStatus(Status status) {
-//                logger.info(status.toString());
+        // create the parser
+        CommandLineParser parser = new DefaultParser();
+        try {
+            // parse the command line arguments
+            CommandLine line = parser.parse( options, args );
+            
+            if ( line.hasOption("help") ) 
+            {
+                // automatically generate the help statement
+                HelpFormatter formatter = new HelpFormatter();
+                formatter.printHelp( "StreamFilter", options );
                 
-                String statusJson = TwitterObjectFactory.getRawJSON(status);
-                statusLogger.info(statusJson);
-                
-                cnt++;
-                if (cnt % 1000 == 0) {
-                    System.out.println(cnt + " messages received.");
+                System.exit(1);
+            }
+            
+            // Check if we have keyword file
+            if ( line.hasOption("keywords") ) 
+            {
+                keywordString = "(";
+                String file = line.getOptionValue("keywords");
+                try 
+                {
+                    List<String> keywordList = getKeywords(file);
+                    for(String s: keywordList)
+                        {
+                            keywordString += s+" OR ";
+                        }
+                        keywordString = keywordString.substring(0, keywordString.length() - 4) + ")";
+                } 
+                catch ( IOException ioe ) 
+                {
+                    System.err.printf("File [%s] Not Found!", file);
+                    System.exit(1);
                 }
             }
-
-            @Override
-            public void onDeletionNotice(StatusDeletionNotice sdn) {
-//                logger.warn("Hit Delete notice");
-            }
-
-            @Override
-            public void onTrackLimitationNotice(int i) {
-                logger.warn("Hit track limitation");
-            }
-
-            @Override
-            public void onScrubGeo(long l, long l1) {
-                logger.warn("Hit scrub geo");
-            }
-
-            @Override
-            public void onStallWarning(StallWarning sw) {
-                logger.warn("Hit on stall");
-            }
-
-            @Override
-            public void onException(Exception excptn) {
-                System.err.println("Hit Exception: " + excptn.toString());
-            }
-        });
-        
-        RawStreamListener rawListener = new RawStreamListener() {
-
-            @Override
-            public void onMessage(String rawString) {
-
-            }
-
-            @Override
-            public void onException(Exception ex) {
-                logger.warn(ex);
-            }
-
-        };
-
-        twitterStream.addListener(rawListener);
-        
-        // If we have a query, filter on it. Otherwise, just stream
-        if ( query != null ) {
-            System.out.println("Query:" + query);
-        
-            // Now start listening
-            twitterStream.filter(query);
             
-        } else {
-            twitterStream.sample();
+            // Check if we have a user file
+            if ( line.hasOption("users") ) 
+            {
+                usersString = "(";
+                String file = line.getOptionValue("users");
+                try {
+                    List<String> usersList = getKeywords(file);
+                    for(String s: usersList)
+                        {
+                            usersString += "from:" + s + " OR ";
+                        }
+                        usersString = usersString.substring(0, usersString.length() - 4) + ")";
+                } catch ( IOException ioe ) {
+                    System.err.printf("File [%s] Not Found!", file);
+                    System.exit(1);
+                }
+            }
+        }
+        catch( ParseException exp ) 
+        {
+            // oops, something went wrong
+            System.err.println( "Parsing failed.  Reason: " + exp.getMessage() );
+        }
+
+        String bearerToken = System.getenv("BEARER_TOKEN");
+        String query = null;
+
+        if(keywordString == null && usersString == null)
+        {
+            connectSampledStream(bearerToken, statusLogger);
+        } 
+        else 
+        {
+            connectFilteredStream(bearerToken, keywordString, usersString, statusLogger);
+        }
+
+    }
+
+    // Returns httpClient
+    private static HttpClient getHttpClient()
+    {
+        HttpClient httpClient = HttpClients.custom()
+            .setDefaultRequestConfig(RequestConfig.custom()
+                .setCookieSpec(CookieSpecs.STANDARD).build())
+            .build();
+        return httpClient;
+    }
+
+    // Method to connect to sampleStream API to stream all tweets
+    private static void connectSampledStream(String bearerToken, Logger logger) throws IOException, URISyntaxException 
+    {
+        HttpClient httpClient = getHttpClient();
+    
+        URIBuilder sampledStreamURI = new URIBuilder("https://api.twitter.com/2/tweets/sample/stream");
+    
+        HttpGet httpGet = new HttpGet(sampledStreamURI.build());
+        httpGet.setHeader("Authorization", String.format("Bearer %s", bearerToken));
+    
+        HttpResponse response = httpClient.execute(httpGet);
+        HttpEntity entity = response.getEntity();
+        if (null != entity) 
+        {
+          BufferedReader reader = new BufferedReader(new InputStreamReader((entity.getContent())));
+          String line = reader.readLine();
+          while (line != null) 
+          {
+            System.out.println(line);
+            logger.info(line);
+            line = reader.readLine();
+          }
+        }
+    
+    }
+
+    // Method to create hashmap of formatted keywords and users
+    private static Map getRuleList(String keywordString, String usersString) throws IOException 
+    {
+        Map<String, String> rules = new HashMap<String, String>();
+        if(keywordString != null)
+        {
+            rules.put(keywordString, "tracking these keywords");
+        }
+        if(usersString != null)
+        {
+            rules.put(usersString, "tracking these users");
+        }
+        return rules;
+    }
+
+    // Method to call filteredStream API after rules are set up 
+    private static void connectFilteredStream(String bearerToken, String keywordString, String usersString, Logger logger) throws IOException, URISyntaxException
+    {
+        Map<String, String> rulesNew = getRuleList(keywordString, usersString);
+
+        setupRules(bearerToken, rulesNew);
+        HttpClient httpClient = getHttpClient();
+
+        URIBuilder uriBuilder = new URIBuilder("https://api.twitter.com/2/tweets/search/stream");
+
+        HttpGet httpGet = new HttpGet(uriBuilder.build());
+        httpGet.setHeader("Authorization", String.format("Bearer %s", bearerToken));
+
+        HttpResponse response = httpClient.execute(httpGet);
+        HttpEntity entity = response.getEntity();
+        if (null != entity) 
+        {
+            BufferedReader reader = new BufferedReader(new InputStreamReader((entity.getContent())));
+            String line = reader.readLine();
+            while (line != null) 
+            {
+                System.out.println(line);
+                line = reader.readLine();
+            }
+        }
+    }
+
+    // Method to setup rules by deleting old rules and creating new ones upon runtime
+    private static void setupRules(String bearerToken, Map<String, String> rules) throws IOException, URISyntaxException 
+    {
+        List<String> existingRules = getRules(bearerToken);
+        if (existingRules.size() > 0) 
+        {
+            deleteRules(bearerToken, existingRules);
+        }
+        createRules(bearerToken, rules);
+    }
+    
+    // Method to create rules to add to filteredStream
+    private static void createRules(String bearerToken, Map<String, String> rules) throws URISyntaxException, IOException 
+    {
+        HttpClient httpClient = getHttpClient();
+
+        URIBuilder uriBuilder = new URIBuilder("https://api.twitter.com/2/tweets/search/stream/rules");
+
+        HttpPost httpPost = new HttpPost(uriBuilder.build());
+        httpPost.setHeader("Authorization", String.format("Bearer %s", bearerToken));
+        httpPost.setHeader("content-type", "application/json");
+        StringEntity body = new StringEntity(getFormattedString("{\"add\": [%s]}", rules));
+        httpPost.setEntity(body);
+        HttpResponse response = httpClient.execute(httpPost);
+        HttpEntity entity = response.getEntity();
+        if (null != entity) 
+        {
+            System.out.println(EntityUtils.toString(entity, "UTF-8"));
+        }
+    }
+    
+    // Method to get existing rules 
+    private static List<String> getRules(String bearerToken) throws URISyntaxException, IOException {
+        List<String> rules = new ArrayList<>();
+        HttpClient httpClient = getHttpClient();
+
+        URIBuilder uriBuilder = new URIBuilder("https://api.twitter.com/2/tweets/search/stream/rules");
+
+        HttpGet httpGet = new HttpGet(uriBuilder.build());
+        httpGet.setHeader("Authorization", String.format("Bearer %s", bearerToken));
+        httpGet.setHeader("content-type", "application/json");
+        HttpResponse response = httpClient.execute(httpGet);
+        HttpEntity entity = response.getEntity();
+        if (null != entity) 
+        {
+            JSONObject json = new JSONObject(EntityUtils.toString(entity, "UTF-8"));
+            if (json.length() > 1) 
+            {
+                JSONArray array = (JSONArray) json.get("data");
+                for (int i = 0; i < array.length(); i++) 
+                {
+                    JSONObject jsonObject = (JSONObject) array.get(i);
+                    rules.add(jsonObject.getString("id"));
+                }
+            }
+        }
+        return rules;
+    }
+    
+    // Method to delete existing rules
+    private static void deleteRules(String bearerToken, List<String> existingRules) throws URISyntaxException, IOException 
+    {
+        HttpClient httpClient = getHttpClient();
+
+        URIBuilder uriBuilder = new URIBuilder("https://api.twitter.com/2/tweets/search/stream/rules");
+
+        HttpPost httpPost = new HttpPost(uriBuilder.build());
+        httpPost.setHeader("Authorization", String.format("Bearer %s", bearerToken));
+        httpPost.setHeader("content-type", "application/json");
+        StringEntity body = new StringEntity(getFormattedString("{ \"delete\": { \"ids\": [%s]}}", existingRules));
+        httpPost.setEntity(body);
+        HttpResponse response = httpClient.execute(httpPost);
+        HttpEntity entity = response.getEntity();
+        if (null != entity) 
+        {
+            System.out.println(EntityUtils.toString(entity, "UTF-8"));
+        }
+    }
+    
+    private static String getFormattedString(String string, List<String> ids) {
+        StringBuilder sb = new StringBuilder();
+        if (ids.size() == 1) 
+        {
+            return String.format(string, "\"" + ids.get(0) + "\"");
+        } 
+        else 
+        {
+            for (String id : ids) 
+            {
+                sb.append("\"" + id + "\"" + ",");
+            }
+            String result = sb.toString();
+            return String.format(string, result.substring(0, result.length() - 1));
+        }
+    }
+    
+    private static String getFormattedString(String string, Map<String, String> rules) {
+        StringBuilder sb = new StringBuilder();
+        if (rules.size() == 1) 
+        {
+            String key = rules.keySet().iterator().next();
+            return String.format(string, "{\"value\": \"" + key + "\", \"tag\": \"" + rules.get(key) + "\"}");
+        } 
+        else 
+        {
+            for (Map.Entry<String, String> entry : rules.entrySet()) 
+            {
+                String value = entry.getKey();
+                String tag = entry.getValue();
+                sb.append("{\"value\": \"" + value + "\", \"tag\": \"" + tag + "\"}" + ",");
+            }
+            String result = sb.toString();
+            return String.format(string, result.substring(0, result.length() - 1));
         }
     }
 }
