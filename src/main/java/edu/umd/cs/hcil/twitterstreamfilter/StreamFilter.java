@@ -1,6 +1,6 @@
 package edu.umd.cs.hcil.twitterstreamfilter;
 
-// import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.FileReader;
@@ -25,6 +25,8 @@ import org.apache.log4j.PatternLayout;
 import org.apache.log4j.varia.LevelRangeFilter;
 import org.apache.log4j.rolling.RollingFileAppender;
 import org.apache.log4j.rolling.TimeBasedRollingPolicy;
+import org.geojson.Feature;
+import org.geojson.FeatureCollection;
 
 // API v2
 import org.apache.http.HttpEntity;
@@ -56,6 +58,16 @@ public class StreamFilter
     private static final String MINUTE_ROLL = ".%d{yyyy-MM-dd-HH-mm}.gz";
     private static final String HOUR_ROLL = ".%d{yyyy-MM-dd-HH}.gz";
     
+    private static String getExtendedApiFields() throws IOException {
+        String tweetFields = "tweet.fields=attachments,author_id,context_annotations,conversation_id,created_at,entities,geo,id,in_reply_to_user_id,lang,possibly_sensitive,public_metrics,referenced_tweets,reply_settings,source,text,withheld";
+        String userFields = "user.fields=created_at,description,entities,location,name,profile_image_url,protected,public_metrics,url,username,verified,withheld";
+        String expansions = "expansions=author_id,referenced_tweets.id,attachments.media_keys,entities.mentions.username,geo.place_id";
+        String placeFields = "place.fields=contained_within,country,country_code,full_name,geo,id,name,place_type";
+        String mediaFields = "media.fields=preview_image_url,url";
+
+        return "?"+expansions+"&"+tweetFields+"&"+userFields+"&"+placeFields+"&"+mediaFields; 
+    }
+    
     private static List<String> getKeywords(String file) throws IOException {
         List<String> keywords = new ArrayList<>();
         
@@ -69,6 +81,40 @@ public class StreamFilter
         }
         
         return keywords;
+    }
+
+    private static List<Double[]> readGeoJson(String file) throws IOException {
+        
+        List<Double[]> bboxes = new ArrayList<>();
+        
+        try (FileReader fr = new FileReader(file)) {
+            FeatureCollection featureCollection = 
+                    new ObjectMapper().readValue(fr, FeatureCollection.class);
+            
+            for ( Feature f : featureCollection.getFeatures() ) {
+                double[] box = f.getBbox();
+                Double[] reboxedBox = new Double[box.length];
+                for ( int i = 0; i<box.length; i++ ) {
+                    reboxedBox[i] = box[i];
+                }
+                bboxes.add(reboxedBox);
+            }
+        }
+        
+        return bboxes;
+    }
+
+    private static String toLocationsString(final double[][] keywords) {
+        final StringBuilder buf = new StringBuilder(20 * keywords.length * 2);
+        for (double[] keyword : keywords) {
+            if (0 != buf.length()) {
+                buf.append(" ");
+            }
+            buf.append(keyword[0]);
+            buf.append(" ");
+            buf.append(keyword[1]);
+        }
+        return buf.toString();
     }
     
     public static void main( String[] args ) throws IOException, URISyntaxException
@@ -154,9 +200,9 @@ public class StreamFilter
 
         // creates a custom logger and log messages
         final Logger logger = Logger.getLogger(StreamFilter.class);
-        logger.info("Hahha");
         String keywordString = null;
         String usersString = null;
+        String locationString = null;
 
         // create the parser
         CommandLineParser parser = new DefaultParser();
@@ -171,6 +217,31 @@ public class StreamFilter
                 formatter.printHelp( "StreamFilter", options );
                 
                 System.exit(1);
+            }
+
+            // Check if we have geojson file
+            if ( line.hasOption("bounds") ) 
+            {
+                
+                String file = line.getOptionValue("bounds");
+                
+                try {
+                    List<Double[]> locationList = readGeoJson(file);
+                    double[][] locationListDouble = new double[2][2];
+                    
+                    Double[] fullBox = locationList.get(0);
+                    locationListDouble[0] = new double[]{fullBox[0], fullBox[1]};
+                    locationListDouble[1] = new double[]{fullBox[2], fullBox[3]};
+                    
+                    locationString = "bounding_box: [" + toLocationsString(locationListDouble) + "]";
+                    System.out.println(locationString);
+                    
+                } catch ( IOException ioe ) {
+                    System.err.printf("Error reading GeoJSON File: [%s]", file);
+                    ioe.printStackTrace();
+
+                    System.exit(1);
+                }
             }
             
             // Check if we have keyword file
@@ -221,13 +292,13 @@ public class StreamFilter
         String bearerToken = System.getenv("BEARER_TOKEN");
         String query = null;
 
-        if(keywordString == null && usersString == null)
+        if(keywordString == null && usersString == null && locationString == null)
         {
             connectSampledStream(bearerToken, statusLogger);
         } 
         else 
         {
-            connectFilteredStream(bearerToken, keywordString, usersString, statusLogger);
+            connectFilteredStream(bearerToken, keywordString, usersString, locationString, statusLogger);
         }
 
     }
@@ -247,7 +318,7 @@ public class StreamFilter
     {
         HttpClient httpClient = getHttpClient();
     
-        URIBuilder sampledStreamURI = new URIBuilder("https://api.twitter.com/2/tweets/sample/stream");
+        URIBuilder sampledStreamURI = new URIBuilder("https://api.twitter.com/2/tweets/sample/stream" + getExtendedApiFields());
     
         HttpGet httpGet = new HttpGet(sampledStreamURI.build());
         httpGet.setHeader("Authorization", String.format("Bearer %s", bearerToken));
@@ -265,11 +336,10 @@ public class StreamFilter
             line = reader.readLine();
           }
         }
-    
     }
 
     // Method to create hashmap of formatted keywords and users
-    private static Map getRuleList(String keywordString, String usersString) throws IOException 
+    private static Map getRuleList(String keywordString, String usersString, String locationString) throws IOException 
     {
         Map<String, String> rules = new HashMap<String, String>();
         if(keywordString != null)
@@ -280,18 +350,22 @@ public class StreamFilter
         {
             rules.put(usersString, "tracking these users");
         }
+        if(locationString != null)
+        {
+            rules.put(locationString, "tracking within this location");
+        }
         return rules;
     }
 
     // Method to call filteredStream API after rules are set up 
-    private static void connectFilteredStream(String bearerToken, String keywordString, String usersString, Logger logger) throws IOException, URISyntaxException
+    private static void connectFilteredStream(String bearerToken, String keywordString, String usersString, String locationString, Logger logger) throws IOException, URISyntaxException
     {
-        Map<String, String> rulesNew = getRuleList(keywordString, usersString);
+        Map<String, String> rulesNew = getRuleList(keywordString, usersString, locationString);
 
         setupRules(bearerToken, rulesNew);
         HttpClient httpClient = getHttpClient();
 
-        URIBuilder uriBuilder = new URIBuilder("https://api.twitter.com/2/tweets/search/stream");
+        URIBuilder uriBuilder = new URIBuilder("https://api.twitter.com/2/tweets/search/stream" + getExtendedApiFields());
 
         HttpGet httpGet = new HttpGet(uriBuilder.build());
         httpGet.setHeader("Authorization", String.format("Bearer %s", bearerToken));
