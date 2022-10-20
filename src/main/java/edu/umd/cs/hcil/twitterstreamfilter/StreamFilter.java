@@ -5,6 +5,8 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.HashMap;
@@ -43,6 +45,7 @@ import org.apache.http.util.EntityUtils;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.net.URISyntaxException;
+import java.util.Properties;
 
 
 public class StreamFilter 
@@ -59,13 +62,19 @@ public class StreamFilter
     private static final String HOUR_ROLL = ".%d{yyyy-MM-dd-HH}.gz";
     
     private static String getExtendedApiFields() throws IOException {
-        String tweetFields = "tweet.fields=attachments,author_id,context_annotations,conversation_id,created_at,entities,geo,id,in_reply_to_user_id,lang,possibly_sensitive,public_metrics,referenced_tweets,reply_settings,source,text,withheld";
-        String userFields = "user.fields=created_at,description,entities,location,name,profile_image_url,protected,public_metrics,url,username,verified,withheld";
-        String expansions = "expansions=author_id,referenced_tweets.id,attachments.media_keys,entities.mentions.username,geo.place_id";
-        String placeFields = "place.fields=contained_within,country,country_code,full_name,geo,id,name,place_type";
-        String mediaFields = "media.fields=preview_image_url,url";
-
-        return "?"+expansions+"&"+tweetFields+"&"+userFields+"&"+placeFields+"&"+mediaFields; 
+        try (InputStream input = new FileInputStream("expansions.properties")) {
+            Properties prop = new Properties();
+            prop.load(input);
+            String expansions = prop.getProperty("expansions");
+            String tweetFields = prop.getProperty("tweetFields");
+            String userFields = prop.getProperty("userFields");
+            String placeFields = prop.getProperty("placeFields");
+            String mediaFields = prop.getProperty("mediaFields");
+            return "?expansions="+expansions+"&tweet.fields="+tweetFields+"&user.fields="+userFields+"&place.fields="+placeFields+"&media.fields="+mediaFields; 
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+            return "";
+        }
     }
     
     private static List<String> getKeywords(String file) throws IOException {
