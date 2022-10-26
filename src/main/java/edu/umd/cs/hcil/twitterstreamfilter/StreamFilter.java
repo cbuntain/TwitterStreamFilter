@@ -72,8 +72,8 @@ public class StreamFilter
             String mediaFields = prop.getProperty("mediaFields");
             return "?expansions="+expansions+"&tweet.fields="+tweetFields+"&user.fields="+userFields+"&place.fields="+placeFields+"&media.fields="+mediaFields; 
         } catch (IOException ioe) {
-            ioe.printStackTrace();
-            return "";
+            String mandatoryFields = "?tweet.fields=author_id,created_at,entities,geo,id,in_reply_to_user_id,lang,possibly_sensitive,public_metrics,source,text,withheld&user.fields=created_at,description,entities,location,name,profile_image_url,protected,public_metrics,url,username,verified";
+            return mandatoryFields;
         }
     }
     
