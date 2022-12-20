@@ -87,9 +87,14 @@ public class StreamFilter
             {
                 keywords.add(line);
             }
+
+            return keywords;
         }
         
-        return keywords;
+        catch( IOException ioe){
+            System.err.printf("Error getting keywords: [%s]", file);
+            ioe.printStackTrace();
+        }
     }
 
     private static List<Double[]> readGeoJson(String file) throws IOException {
@@ -108,9 +113,13 @@ public class StreamFilter
                 }
                 bboxes.add(reboxedBox);
             }
+            return bboxes;
         }
         
-        return bboxes;
+        catch( IOException ioe){
+            System.err.printf("Error reading GeoJSON File: [%s]", file);
+            ioe.printStackTrace();
+        }
     }
 
     private static String toLocationsString(final double[][] keywords) {
@@ -301,12 +310,10 @@ public class StreamFilter
         String bearerToken = System.getenv("BEARER_TOKEN");
         String query = null;
 
-        if(keywordString == null && usersString == null && locationString == null)
-        {
+        if(keywordString == null && usersString == null && locationString == null){
             connectSampledStream(bearerToken, statusLogger);
         } 
-        else 
-        {
+        else {
             connectFilteredStream(bearerToken, keywordString, usersString, locationString, statusLogger);
         }
 
