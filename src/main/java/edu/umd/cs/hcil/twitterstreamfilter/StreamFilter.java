@@ -312,13 +312,20 @@ public class StreamFilter
         String bearerToken = System.getenv("BEARER_TOKEN");
         String query = null;
 
-        if(keywordString == null && usersString == null && locationString == null){
-            connectSampledStream(bearerToken, statusLogger, logger);
-        } 
-        else {
-            connectFilteredStream(bearerToken, keywordString, usersString, locationString, statusLogger, logger);
+        int retryCount = 0;
+        while(true){
+            try{
+                if(keywordString == null && usersString == null && locationString == null){
+                    connectSampledStream(bearerToken, statusLogger, logger);
+                } 
+                else {
+                    connectFilteredStream(bearerToken, keywordString, usersString, locationString, statusLogger, logger);
+                }
+            }
+            catch(Exception exc){
+                if(++retryCount == 3) throw exc;
+            }
         }
-
     }
 
     // Returns httpClient
