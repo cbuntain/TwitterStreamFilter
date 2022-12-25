@@ -94,6 +94,7 @@ public class StreamFilter
         catch( IOException ioe){
             System.err.printf("Error getting keywords: [%s]", file);
             ioe.printStackTrace();
+            return keywords;
         }
     }
 
@@ -119,6 +120,7 @@ public class StreamFilter
         catch( IOException ioe){
             System.err.printf("Error reading GeoJSON File: [%s]", file);
             ioe.printStackTrace();
+            return bboxes;
         }
     }
 
@@ -311,10 +313,10 @@ public class StreamFilter
         String query = null;
 
         if(keywordString == null && usersString == null && locationString == null){
-            connectSampledStream(bearerToken, statusLogger);
+            connectSampledStream(bearerToken, statusLogger, logger);
         } 
         else {
-            connectFilteredStream(bearerToken, keywordString, usersString, locationString, statusLogger);
+            connectFilteredStream(bearerToken, keywordString, usersString, locationString, statusLogger, logger);
         }
 
     }
@@ -330,7 +332,7 @@ public class StreamFilter
     }
 
     // Method to connect to sampleStream API to stream all tweets
-    private static void connectSampledStream(String bearerToken, Logger logger) throws IOException, URISyntaxException 
+    private static void connectSampledStream(String bearerToken, Logger logger, Logger warningsLogger) throws IOException, URISyntaxException 
     {
         HttpClient httpClient = getHttpClient();
     
@@ -341,6 +343,7 @@ public class StreamFilter
     
         HttpResponse response = httpClient.execute(httpGet);
         HttpEntity entity = response.getEntity();
+        int statusCode = response.getStatusLine().getStatusCode();
         if (null != entity) 
         {
           BufferedReader reader = new BufferedReader(new InputStreamReader((entity.getContent())));
@@ -348,7 +351,8 @@ public class StreamFilter
           while (line != null) 
           {
             System.out.println(line);
-            logger.info(line);
+            if(statusCode != 200) warningsLogger.warn(line);
+            else logger.info(line);
             line = reader.readLine();
           }
         }
@@ -374,7 +378,7 @@ public class StreamFilter
     }
 
     // Method to call filteredStream API after rules are set up 
-    private static void connectFilteredStream(String bearerToken, String keywordString, String usersString, String locationString, Logger logger) throws IOException, URISyntaxException
+    private static void connectFilteredStream(String bearerToken, String keywordString, String usersString, String locationString, Logger logger, Logger warningsLogger) throws IOException, URISyntaxException
     {
         Map<String, String> rulesNew = getRuleList(keywordString, usersString, locationString);
 
@@ -387,6 +391,7 @@ public class StreamFilter
         httpGet.setHeader("Authorization", String.format("Bearer %s", bearerToken));
 
         HttpResponse response = httpClient.execute(httpGet);
+        int statusCode = response.getStatusLine().getStatusCode();
         HttpEntity entity = response.getEntity();
         if (null != entity) 
         {
@@ -394,7 +399,8 @@ public class StreamFilter
             String line = reader.readLine();
             while (line != null) 
             {
-                System.out.println(line);
+                if(statusCode != 200) warningsLogger.warn(line);
+                else logger.info(line);
                 line = reader.readLine();
             }
         }
